@@ -22,11 +22,44 @@ function setupUI() {
     const syncButton = document.getElementById('syncButton');
     syncButton.addEventListener('click', handleSyncButtonClick);
     
-    // 添加定时器检查选中图层状态并更新UI
+    // 降低更新频率到 500ms
     setInterval(async () => {
         await updateUI();
-    }, 100);
+    }, 500);
 }
+
+// 添加防抖函数
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// 优化 updateUI 函数
+const debouncedUpdateUI = debounce(async () => {
+    try {
+        const doc = app.activeDocument;
+        if (!doc) return;
+        
+        // 只在文档ID改变或缓存为空时更新缓存
+        if (lastDocId !== doc.id || layerCache.size === 0) {
+            await updateLayerCache();
+        }
+        
+        await Promise.all([
+            updateButtonText(),
+            updateSyncGroupsList()
+        ]);
+    } catch (err) {
+        console.error('更新UI时出错:', err);
+    }
+}, 100);
 
 async function updateUI() {
     try {
@@ -39,11 +72,7 @@ async function updateUI() {
 
 async function updateSyncGroupsList() {
     const syncGroupsContainer = document.querySelector('.sync-groups-container');
-    
-    // 清空容器，但保留标题
-    syncGroupsContainer.innerHTML = '';
-    
-    const selectedLayers = await getSelectedLayers();
+    const fragment = document.createDocumentFragment();
     
     // 创建同步组的Map
     const uniqueGroups = new Map();
@@ -65,12 +94,27 @@ async function updateSyncGroupsList() {
         
         // 使用排序后的图层ID作为key
         const groupKey = Array.from(groupLayerIds).sort().join(',');
-        uniqueGroups.set(groupKey, Array.from(groupLayerIds));
+        
+        // 获取组内所有图层的信息
+        const layersInfo = Array.from(groupLayerIds)
+            .map(id => {
+                const layer = layerCache.get(id);
+                if (!layer) return null;
+                return {
+                    id: layer.id,
+                    name: layer.name,
+                    // 添加更多可能需要的信息，比如路径等
+                    path: getLayerPath(layer)
+                };
+            })
+            .filter(info => info !== null);
+            
+        uniqueGroups.set(groupKey, layersInfo);
     }
     
     // 创建同步组列表
     let groupIndex = 1;
-    for (const [_, layerIds] of uniqueGroups) {
+    for (const [_, layersInfo] of uniqueGroups) {
         const groupDiv = document.createElement('div');
         groupDiv.className = 'sync-group';
         
@@ -89,8 +133,8 @@ async function updateSyncGroupsList() {
         visibilityButton.title = '切换组内所有图层可见性';
         
         // 检查组内图层的可见性状态
-        const layersInGroup = layerIds
-            .map(id => layerCache.get(id))
+        const layersInGroup = layersInfo
+            .map(info => layerCache.get(info.id))
             .filter(layer => layer);
         
         const allVisible = layersInGroup.every(layer => layer.visible);
@@ -140,7 +184,7 @@ async function updateSyncGroupsList() {
         layersDiv.className = 'sync-group-layers';
         
         // 添加图层列表
-        layerIds.forEach(id => {
+        layersInfo.forEach(info => {
             const layerDiv = document.createElement('div');
             layerDiv.className = 'sync-layer';
             
@@ -148,9 +192,11 @@ async function updateSyncGroupsList() {
             const visibilityIcon = document.createElement('span');
             visibilityIcon.className = 'sync-layer-visibility';
             
-            // 添加图层名称
+            // 添加图层名称和路径
             const layerName = document.createElement('span');
-            layerName.textContent = layerCache.get(id).name;
+            // 如果有同名图层，显示完整路径
+            const hasDuplicateName = layersInfo.filter(l => l.name === info.name).length > 1;
+            layerName.textContent = hasDuplicateName ? info.path : info.name;
             
             layerDiv.appendChild(visibilityIcon);
             layerDiv.appendChild(layerName);
@@ -196,8 +242,8 @@ async function updateSyncGroupsList() {
                     }
                     
                     // 添加选择命令
-                    const targetLayers = layerIds
-                        .map(id => layerCache.get(id))
+                    const targetLayers = layersInfo
+                        .map(info => layerCache.get(info.id))
                         .filter(layer => layer); // 过滤掉未找到的图层
                     
                     if (targetLayers.length > 0) {
@@ -227,8 +273,8 @@ async function updateSyncGroupsList() {
             event.stopPropagation();
             try {
                 await core.executeAsModal(async () => {
-                    const targetLayers = layerIds
-                        .map(id => layerCache.get(id))
+                    const targetLayers = layersInfo
+                        .map(info => layerCache.get(info.id))
                         .filter(layer => layer);
 
                     const allVisible = targetLayers.every(layer => layer.visible);
@@ -261,30 +307,54 @@ async function updateSyncGroupsList() {
         deleteButton.addEventListener('click', async (event) => {
             event.stopPropagation();
             try {
-                // 移除同步关系
-                for (const id of layerIds) {
-                    if (syncGroups.has(id)) {
-                        const syncedLayers = syncGroups.get(id);
-                        syncGroups.delete(id);
-                        previousStates.delete(id);
-                        
-                        // 移除关联图层的同步关系
-                        for (const syncedLayer of syncedLayers) {
-                            syncGroups.delete(syncedLayer.id);
-                            previousStates.delete(syncedLayer.id);
-                        }
+                // 获取当前组内所有图层的ID
+                const currentGroupLayerIds = new Set(layersInfo.map(info => info.id));
+                
+                // 收集所有需要删除的同步关系
+                const relatedIds = new Set();
+                const queue = Array.from(currentGroupLayerIds);
+                
+                while (queue.length > 0) {
+                    const currentId = queue.pop();
+                    if (relatedIds.has(currentId)) continue;
+                    
+                    relatedIds.add(currentId);
+                    const syncedLayers = syncGroups.get(currentId);
+                    if (syncedLayers) {
+                        syncedLayers.forEach(layer => {
+                            if (!relatedIds.has(layer.id)) {
+                                queue.push(layer.id);
+                            }
+                        });
                     }
                 }
+
+                // 删除所有相关的同步关系
+                for (const id of relatedIds) {
+                    if (syncGroups.has(id)) {
+                        const layer = layerCache.get(id);
+                        syncGroups.delete(id);
+                        previousStates.delete(id);
+                    }
+                }
+
                 // 移除组元素
                 groupDiv.remove();
+                
+                // 更新UI以反映变化
+                await updateUI();
             } catch (err) {
                 console.error('删除同步组时出错:', err);
             }
         });
 
-        syncGroupsContainer.appendChild(groupDiv);
+        fragment.appendChild(groupDiv);
         groupIndex++;
     }
+    
+    // 清空容器并一次性添加所有元素
+    syncGroupsContainer.innerHTML = '';
+    syncGroupsContainer.appendChild(fragment);
 }
 
 async function updateButtonText() {
@@ -293,19 +363,46 @@ async function updateButtonText() {
         const selectedLayers = await getSelectedLayers();
         
         if (selectedLayers.length < 2) {
-            syncButton.textContent = '同步所选图层';
+            syncButton.textContent = '同步显示图层';
             return;
         }
         
-        // 检查选中的图层是否已经在同步组中
-        const hasSyncedLayers = selectedLayers.some(layer => syncGroups.has(layer.id));
+        // 检查选中的图层是否已经在同步组中，并且是否完全匹配
+        let hasSyncedLayers = false;
+        
+        // 检查任意选中图层是否在同步组中
+        for (const layer of selectedLayers) {
+            if (syncGroups.has(layer.id)) {
+                const syncedLayers = syncGroups.get(layer.id);
+                const selectedIds = new Set(selectedLayers.map(l => l.id));
+                selectedIds.delete(layer.id); // 移除当前图层ID
+                
+                // 检查同步组中的图层是否与当前选中的图层完全匹配
+                const syncedIds = new Set(syncedLayers.map(l => l.id));
+                
+                // 如果两个集合完全相同，说明找到了完全匹配的同步组
+                if (setsAreEqual(selectedIds, syncedIds)) {
+                    hasSyncedLayers = true;
+                    break;
+                }
+            }
+        }
         
         // 更新按钮文本
-        syncButton.textContent = hasSyncedLayers ? '取消同步所选图层' : '同步所选图层';
+        syncButton.textContent = hasSyncedLayers ? '取消同步显示图层' : '同步显示图层';
         
     } catch (err) {
         console.error('更新按钮文本时出错:', err);
     }
+}
+
+// 辅助函数：检查两个 Set 是否完全相同
+function setsAreEqual(a, b) {
+    if (a.size !== b.size) return false;
+    for (const item of a) {
+        if (!b.has(item)) return false;
+    }
+    return true;
 }
 
 async function handleSyncButtonClick() {
@@ -314,94 +411,72 @@ async function handleSyncButtonClick() {
         const selectedLayers = await getSelectedLayers();
 
         if (selectedLayers.length < 2) {
-            await app.showAlert('请至少选择两个图层进行同步');
+            await app.showAlert('请至少选择两个图层进行同步显示');
             return;
         }
 
-        // 检查这些图层是否已经在同步组中
-        const alreadySynced = selectedLayers.some(layer => syncGroups.has(layer.id));
-        if (alreadySynced) {
-            // 如果有图层已经在同步组中，解除所有选中图层的同步
+        // 更新图层缓存
+        await updateLayerCache();
+
+        // 检查是否应该取消同步
+        let shouldRemoveSync = false;
+        for (const layer of selectedLayers) {
+            if (syncGroups.has(layer.id)) {
+                const syncedLayers = syncGroups.get(layer.id);
+                const selectedIds = new Set(selectedLayers.map(l => l.id));
+                selectedIds.delete(layer.id);
+                
+                const syncedIds = new Set(syncedLayers.map(l => l.id));
+                if (setsAreEqual(selectedIds, syncedIds)) {
+                    shouldRemoveSync = true;
+                    break;
+                }
+            }
+        }
+
+        if (shouldRemoveSync) {
+            // 收集需要删除的同步关系
+            const relatedIds = new Set();
             for (const layer of selectedLayers) {
                 if (syncGroups.has(layer.id)) {
+                    relatedIds.add(layer.id);
                     const syncedLayers = syncGroups.get(layer.id);
-                    syncGroups.delete(layer.id);
-                    previousStates.delete(layer.id);
-                    await removeLayerMark(layer);
-                    
-                    for (const syncedLayer of syncedLayers) {
-                        syncGroups.delete(syncedLayer.id);
-                        previousStates.delete(syncedLayer.id);
-                        await removeLayerMark(syncedLayer);
-                    }
+                    syncedLayers.forEach(sl => relatedIds.add(sl.id));
+                }
+            }
+
+            // 删除所有相关的同步关系
+            for (const id of relatedIds) {
+                if (syncGroups.has(id)) {
+                    const layer = layerCache.get(id);
+                    syncGroups.delete(id);
+                    previousStates.delete(id);
                 }
             }
         } else {
-            // 更新图层缓存
-            await updateLayerCache();
+            // 创建新的同步组
+            const selectedIds = new Set(selectedLayers.map(l => l.id));
             
-            // 建立新的同步关系
+            // 确保所有选中的图层都建立双向关系
             for (const layer of selectedLayers) {
-                // 过滤出其他图层，并确保使用完整的图层对象
                 const otherLayers = selectedLayers
                     .filter(l => l.id !== layer.id)
                     .map(l => layerCache.get(l.id))
-                    .filter(l => l); // 过滤掉未找到的图层
-                
+                    .filter(l => l);
+
                 syncGroups.set(layer.id, otherLayers);
                 previousStates.set(layer.id, layer.visible);
-                await addLayerMark(layer);
             }
         }
 
         // 开始监听图层变化
         startWatching();
         
-        // 更新按钮文本和同步组列表
+        // 更新UI
         await updateUI();
 
     } catch (err) {
         console.error('同步图层时出错:', err);
-    }
-}
-
-async function addLayerMark(layer) {
-    try {
-        await core.executeAsModal(async () => {
-            // 使用 batchPlay 添加图层颜色标签
-            await batchPlay(
-                [
-                    {
-                        _obj: "setd",
-                        _target: [{ _ref: "layer", _id: layer.id }],
-                        to: { _obj: "layer", color: 6 } // 使用红色标记
-                    }
-                ],
-                {}
-            );
-        }, { commandName: '添加同步标记' });
-    } catch (err) {
-        console.error('添加图层标记时出错:', err);
-    }
-}
-
-async function removeLayerMark(layer) {
-    try {
-        await core.executeAsModal(async () => {
-            // 移除图层颜色标签
-            await batchPlay(
-                [
-                    {
-                        _obj: "setd",
-                        _target: [{ _ref: "layer", _id: layer.id }],
-                        to: { _obj: "layer", color: 0 } // 移除颜色标记
-                    }
-                ],
-                {}
-            );
-        }, { commandName: '移除同步标记' });
-    } catch (err) {
-        console.error('移除图层标记时出错:', err);
     }
 }
 
@@ -416,28 +491,52 @@ let watcherInterval = null;
 function startWatching() {
     if (watcherInterval) return;
     
-    watcherInterval = setInterval(async () => {
-        await checkLayerChanges();
-    }, 100);
+    const debouncedCheck = debounce(checkLayerChanges, 100);
+    watcherInterval = setInterval(debouncedCheck, 100);
 }
 
 async function checkLayerChanges() {
     try {
         const doc = app.activeDocument;
-        const allLayers = await getAllLayers(doc);
+        if (!doc) return;
         
-        for (const layer of allLayers) {
-            if (syncGroups.has(layer.id)) {
-                const previousState = previousStates.get(layer.id);
-                const currentState = layer.visible;
+        // 批量收集需要更新的图层
+        const updates = [];
+        const processed = new Set();
+        
+        for (const [layerId, syncedLayers] of syncGroups.entries()) {
+            if (processed.has(layerId)) continue;
+            
+            const layer = layerCache.get(layerId);
+            if (!layer) continue;
+            
+            const previousState = previousStates.get(layerId);
+            const currentState = layer.visible;
+            
+            if (previousState !== undefined && previousState !== currentState) {
+                updates.push({ layer, syncedLayers, newState: currentState });
+                processed.add(layerId);
                 
-                if (previousState !== undefined && previousState !== currentState) {
-                    const syncedLayers = syncGroups.get(layer.id);
-                    await syncLayerVisibility(layer, syncedLayers);
+                // 标记同步组内的所有图层为处理
+                for (const syncedLayer of syncedLayers) {
+                    processed.add(syncedLayer.id);
                 }
-                
-                previousStates.set(layer.id, currentState);
             }
+        }
+        
+        // 如果有需要更新的图层，一次性执行所有更新
+        if (updates.length > 0) {
+            await core.executeAsModal(async () => {
+                for (const { layer, syncedLayers, newState } of updates) {
+                    for (const targetLayer of syncedLayers) {
+                        if (targetLayer.visible !== newState) {
+                            targetLayer.visible = newState;
+                            previousStates.set(targetLayer.id, newState);
+                        }
+                    }
+                    previousStates.set(layer.id, newState);
+                }
+            }, { commandName: '批量同步图层可见性' });
         }
     } catch (err) {
         console.error('检查图层变化时出错:', err);
@@ -482,16 +581,38 @@ async function updateLayerCache() {
         const doc = app.activeDocument;
         if (!doc) return;
         
+        // 如果文档未改变且缓存存在，直接返回
         if (lastDocId === doc.id && layerCache.size > 0) return;
         
         lastDocId = doc.id;
-        layerCache.clear();
         
+        // 使用 Map 预先存储所有图层，避免重复查找
+        const newCache = new Map();
         const allLayers = await getAllLayers(doc);
+        
+        // 批量更新缓存
         allLayers.forEach(layer => {
-            layerCache.set(layer.id, layer);
+            newCache.set(layer.id, layer);
         });
+        
+        // 一次性替换整个缓存
+        layerCache = newCache;
     } catch (err) {
         console.error('更新图层缓存时出错:', err);
     }
+}
+
+// 添加获取图层路径的辅助函数
+function getLayerPath(layer) {
+    const path = [];
+    let current = layer;
+    
+    while (current) {
+        path.unshift(current.name);
+        current = current.parent;
+        // 如果到达文档层级，停止
+        if (!current || current.typename === "Document") break;
+    }
+    
+    return path.join(" / ");
 } 
