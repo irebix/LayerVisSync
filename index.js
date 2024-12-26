@@ -5,8 +5,9 @@ const { batchPlay } = require("photoshop").action;
 
 let syncGroups = new Map();
 let previousStates = new Map();
-let layerCache = new Map(); // 图层名称到图层引用的映射
-let lastDocId = null; // 用于检测文档是否改变
+let layerCache = new Map();
+let lastDocId = null;
+let lastLayerCount = 0;
 
 entrypoints.setup({
   panels: {
@@ -24,7 +25,7 @@ function setupUI() {
     
     // 降低更新频率到 500ms
     setInterval(async () => {
-        await updateUI();
+        await debouncedUpdateUI();
     }, 500);
 }
 
@@ -47,11 +48,7 @@ const debouncedUpdateUI = debounce(async () => {
         const doc = app.activeDocument;
         if (!doc) return;
         
-        // 只在文档ID改变或缓存为空时更新缓存
-        if (lastDocId !== doc.id || layerCache.size === 0) {
-            await updateLayerCache();
-        }
-        
+        await updateLayerCache();
         await Promise.all([
             updateButtonText(),
             updateSyncGroupsList()
@@ -72,288 +69,40 @@ async function updateUI() {
 
 async function updateSyncGroupsList() {
     const syncGroupsContainer = document.querySelector('.sync-groups-container');
+    
+    // 使用 DocumentFragment 优化 DOM 操作
     const fragment = document.createDocumentFragment();
     
-    // 创建同步组的Map
+    // 创建同步组的Map，使用Set优化查找
     const uniqueGroups = new Map();
     const processedLayers = new Set();
     
-    // 遍历所有同步关系，构建唯一的同步组
+    // 批量处理同步关系
     for (const [layerId, syncedLayers] of syncGroups.entries()) {
-        // 如果这个图层已经被处理过，跳过
         if (processedLayers.has(layerId)) continue;
         
-        // 收集这个同步组的所有图层ID
         const groupLayerIds = new Set([layerId]);
         syncedLayers.forEach(layer => groupLayerIds.add(layer.id));
         
-        // 标记这些图层为已处理
         for (const id of groupLayerIds) {
             processedLayers.add(id);
         }
         
-        // 使用排序后的图层ID作为key
         const groupKey = Array.from(groupLayerIds).sort().join(',');
-        
-        // 获取组内所有图层的信息
-        const layersInfo = Array.from(groupLayerIds)
-            .map(id => {
-                const layer = layerCache.get(id);
-                if (!layer) return null;
-                return {
-                    id: layer.id,
-                    name: layer.name,
-                    // 添加更多可能需要的信息，比如路径等
-                    path: getLayerPath(layer)
-                };
-            })
-            .filter(info => info !== null);
-            
-        uniqueGroups.set(groupKey, layersInfo);
+        uniqueGroups.set(groupKey, Array.from(groupLayerIds));
     }
     
-    // 创建同步组列表
-    let groupIndex = 1;
-    for (const [_, layersInfo] of uniqueGroups) {
-        const groupDiv = document.createElement('div');
-        groupDiv.className = 'sync-group';
-        
-        const headerDiv = document.createElement('div');
-        headerDiv.className = 'sync-group-header';
-        
-        // 添加控制按钮容器
-        const controlsDiv = document.createElement('div');
-        controlsDiv.className = 'sync-group-controls';
-        
-        // 添加可见性切换按钮
-        const visibilityButton = document.createElement('sp-action-button');
-        visibilityButton.setAttribute('quiet', '');
-        visibilityButton.setAttribute('size', 'xs');
-        visibilityButton.style.cursor = 'pointer';
-        visibilityButton.title = '切换组内所有图层可见性';
-        
-        // 检查组内图层的可见性状态
-        const layersInGroup = layersInfo
-            .map(info => layerCache.get(info.id))
-            .filter(layer => layer);
-        
-        const allVisible = layersInGroup.every(layer => layer.visible);
-        
-        // 根据可见性状态设置不同的图标
-        visibilityButton.innerHTML = allVisible ? `
-            <div slot="icon" style="width: 18px; height: 18px;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                    <path fill="currentColor" d="M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>
-                </svg>
-            </div>
-        ` : `
-            <div slot="icon" style="width: 18px; height: 18px;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                    <path fill="currentColor" d="M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z"/>
-                </svg>
-            </div>
-        `;
-        
-        // 添加删除按钮
-        const deleteButton = document.createElement('sp-action-button');
-        deleteButton.setAttribute('quiet', '');
-        deleteButton.setAttribute('size', 'xs');
-        deleteButton.style.cursor = 'pointer';
-        deleteButton.title = '删除同步组';
-        deleteButton.innerHTML = `
-            <div slot="icon" style="width: 18px; height: 18px;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                    <path fill="currentColor" d="M13.7 4.3l-1-.1V3c0-.6-.4-1-1-1H6.3c-.6 0-1 .4-1 1v1.2l-1 .1c-.5.1-.9.5-.9 1v1.2h11.2V5.3c0-.5-.4-.9-.9-1zM6.8 3.5h4.4v.7H6.8v-.7zm5.4 4.1H5.8v6.8c0 .6.4 1 1 1h4.4c.6 0 1-.4 1-1V7.6z"/>
-                </svg>
-            </div>
-        `;
-        
-        // 组装界面元素
-        controlsDiv.appendChild(visibilityButton);
-        controlsDiv.appendChild(deleteButton);
-        headerDiv.appendChild(controlsDiv);
-
-        // 添加标题
-        const titleDiv = document.createElement('div');
-        titleDiv.className = 'sync-group-title';
-        titleDiv.textContent = `同步组 ${groupIndex}`;
-        
-        headerDiv.appendChild(titleDiv);
-        
-        const layersDiv = document.createElement('div');
-        layersDiv.className = 'sync-group-layers';
-        
-        // 添加图层列表
-        layersInfo.forEach(info => {
-            const layerDiv = document.createElement('div');
-            layerDiv.className = 'sync-layer';
-            
-            // 添加可见性图标
-            const visibilityIcon = document.createElement('span');
-            visibilityIcon.className = 'sync-layer-visibility';
-            
-            // 添加图层名称和路径
-            const layerName = document.createElement('span');
-            // 如果有同名图层，显示完整路径
-            const hasDuplicateName = layersInfo.filter(l => l.name === info.name).length > 1;
-            layerName.textContent = hasDuplicateName ? info.path : info.name;
-            
-            layerDiv.appendChild(visibilityIcon);
-            layerDiv.appendChild(layerName);
-            layersDiv.appendChild(layerDiv);
-        });
-        
-        groupDiv.appendChild(headerDiv);
-        groupDiv.appendChild(layersDiv);
-        
-        // 点击组的处理
-        groupDiv.addEventListener('click', async (event) => {
-            const wasSelected = groupDiv.classList.contains('selected');
-            
-            // 立即更新UI
-            if (!event.shiftKey) {
-                document.querySelectorAll('.sync-group').forEach(group => {
-                    if (group !== groupDiv) {
-                        group.classList.remove('selected');
-                    }
-                });
-            }
-            
-            if (wasSelected) {
-                groupDiv.classList.remove('selected');
-            } else {
-                groupDiv.classList.add('selected');
-            }
-
-            // 更新图层缓存
-            await updateLayerCache();
-
-            // 使用批处理更新图层选择状态
-            try {
-                await core.executeAsModal(async () => {
-                    // 准备批处理命令
-                    const commands = [];
-                    
-                    if (!event.shiftKey) {
-                        // 如果不是Shift点击，先取消所有选择
-                        commands.push({
-                            _obj: "selectNoLayers"
-                        });
-                    }
-                    
-                    // 添加选择命令
-                    const targetLayers = layersInfo
-                        .map(info => layerCache.get(info.id))
-                        .filter(layer => layer); // 过滤掉未找到的图层
-                    
-                    if (targetLayers.length > 0) {
-                        commands.push({
-                            _obj: "select",
-                            _target: targetLayers.map(layer => ({
-                                _ref: "layer",
-                                _id: layer.id
-                            })),
-                            makeVisible: false,
-                            layerID: targetLayers.map(layer => layer.id),
-                            selectionModifier: event.shiftKey ? "addToSelection" : "removeFromSelection"
-                        });
-                    }
-                    
-                    // 执行批处理
-                    await require("photoshop").action.batchPlay(commands, {});
-                    
-                }, { commandName: '选择同步组图层' });
-            } catch (err) {
-                console.error('选择图层时出错:', err);
-            }
-        });
-
-        // 添加点击事件处理
-        visibilityButton.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            try {
-                await core.executeAsModal(async () => {
-                    const targetLayers = layersInfo
-                        .map(info => layerCache.get(info.id))
-                        .filter(layer => layer);
-
-                    const allVisible = targetLayers.every(layer => layer.visible);
-                    
-                    // 切换可见性
-                    for (const layer of targetLayers) {
-                        layer.visible = !allVisible;
-                    }
-                    
-                    // 更新按钮图标
-                    visibilityButton.innerHTML = !allVisible ? `
-                        <div slot="icon" style="width: 18px; height: 18px;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                                <path fill="currentColor" d="M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>
-                            </svg>
-                        </div>
-                    ` : `
-                        <div slot="icon" style="width: 18px; height: 18px;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                                <path fill="currentColor" d="M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z"/>
-                            </svg>
-                        </div>
-                    `;
-                }, { commandName: '切换同步组可见性' });
-            } catch (err) {
-                console.error('切换图层可见性时出错:', err);
-            }
-        });
-
-        deleteButton.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            try {
-                // 获取当前组内所有图层的ID
-                const currentGroupLayerIds = new Set(layersInfo.map(info => info.id));
-                
-                // 收集所有需要删除的同步关系
-                const relatedIds = new Set();
-                const queue = Array.from(currentGroupLayerIds);
-                
-                while (queue.length > 0) {
-                    const currentId = queue.pop();
-                    if (relatedIds.has(currentId)) continue;
-                    
-                    relatedIds.add(currentId);
-                    const syncedLayers = syncGroups.get(currentId);
-                    if (syncedLayers) {
-                        syncedLayers.forEach(layer => {
-                            if (!relatedIds.has(layer.id)) {
-                                queue.push(layer.id);
-                            }
-                        });
-                    }
-                }
-
-                // 删除所有相关的同步关系
-                for (const id of relatedIds) {
-                    if (syncGroups.has(id)) {
-                        const layer = layerCache.get(id);
-                        syncGroups.delete(id);
-                        previousStates.delete(id);
-                    }
-                }
-
-                // 移除组元素
-                groupDiv.remove();
-                
-                // 更新UI以反映变化
-                await updateUI();
-            } catch (err) {
-                console.error('删除同步组时出错:', err);
-            }
-        });
-
-        fragment.appendChild(groupDiv);
-        groupIndex++;
-    }
-    
-    // 清空容器并一次性添加所有元素
+    // 一次性清空容器
     syncGroupsContainer.innerHTML = '';
+    
+    // 创建并添加同步组元素
+    let groupIndex = 1;
+    for (const [_, layerIds] of uniqueGroups) {
+        const groupDiv = createSyncGroupElement(layerIds, groupIndex++);
+        fragment.appendChild(groupDiv);
+    }
+    
+    // 一次性添加所有元素
     syncGroupsContainer.appendChild(fragment);
 }
 
@@ -495,7 +244,14 @@ function startWatching() {
     watcherInterval = setInterval(debouncedCheck, 100);
 }
 
+let lastCheckTime = 0;
+const CHECK_INTERVAL = 100; // 最小检查间隔
+
 async function checkLayerChanges() {
+    const now = Date.now();
+    if (now - lastCheckTime < CHECK_INTERVAL) return;
+    lastCheckTime = now;
+    
     try {
         const doc = app.activeDocument;
         if (!doc) return;
@@ -517,14 +273,13 @@ async function checkLayerChanges() {
                 updates.push({ layer, syncedLayers, newState: currentState });
                 processed.add(layerId);
                 
-                // 标记同步组内的所有图层为处理
                 for (const syncedLayer of syncedLayers) {
                     processed.add(syncedLayer.id);
                 }
             }
         }
         
-        // 如果有需要更新的图层，一次性执行所有更新
+        // 批量执行更新
         if (updates.length > 0) {
             await core.executeAsModal(async () => {
                 for (const { layer, syncedLayers, newState } of updates) {
@@ -581,21 +336,28 @@ async function updateLayerCache() {
         const doc = app.activeDocument;
         if (!doc) return;
         
-        // 如果文档未改变且缓存存在，直接返回
-        if (lastDocId === doc.id && layerCache.size > 0) return;
+        // 检查文档ID和图层数量是否变化
+        const currentLayerCount = doc.layers.length;
+        if (lastDocId === doc.id && layerCache.size > 0 && lastLayerCount === currentLayerCount) {
+            return;
+        }
         
         lastDocId = doc.id;
+        lastLayerCount = currentLayerCount;
         
-        // 使用 Map 预先存储所有图层，避免重复查找
+        // 使用迭代器而不是递归来收集图层
         const newCache = new Map();
-        const allLayers = await getAllLayers(doc);
+        const stack = [...doc.layers];
         
-        // 批量更新缓存
-        allLayers.forEach(layer => {
+        while (stack.length > 0) {
+            const layer = stack.pop();
             newCache.set(layer.id, layer);
-        });
+            
+            if (layer.layers && layer.layers.length > 0) {
+                stack.push(...layer.layers);
+            }
+        }
         
-        // 一次性替换整个缓存
         layerCache = newCache;
     } catch (err) {
         console.error('更新图层缓存时出错:', err);
@@ -615,4 +377,180 @@ function getLayerPath(layer) {
     }
     
     return path.join(" / ");
+}
+
+// 添��创建同步组元素的函数
+function createSyncGroupElement(layerIds, groupIndex) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'sync-group';
+    
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'sync-group-header';
+    
+    // 添加控制按钮容器
+    const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'sync-group-controls';
+    
+    // 添加可见性切换按钮
+    const visibilityButton = document.createElement('sp-action-button');
+    visibilityButton.setAttribute('quiet', '');
+    visibilityButton.setAttribute('size', 'xs');
+    visibilityButton.style.cursor = 'pointer';
+    visibilityButton.title = '切换组内所有图层可见性';
+    
+    // 检查组内图层的可见性状态
+    const layersInGroup = layerIds
+        .map(id => layerCache.get(id))
+        .filter(layer => layer);
+    
+    const allVisible = layersInGroup.every(layer => layer.visible);
+    
+    // 设置可见性按钮图标
+    visibilityButton.innerHTML = `
+        <div slot="icon" style="width: 18px; height: 18px;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                <path fill="currentColor" d="${allVisible ? 
+                    'M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z' : 
+                    'M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z'
+                }"/>
+            </svg>
+        </div>
+    `;
+    
+    // 添加删除按钮
+    const deleteButton = document.createElement('sp-action-button');
+    deleteButton.setAttribute('quiet', '');
+    deleteButton.setAttribute('size', 'xs');
+    deleteButton.style.cursor = 'pointer';
+    deleteButton.title = '删除同步组';
+    deleteButton.innerHTML = `
+        <div slot="icon" style="width: 18px; height: 18px;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                <path fill="currentColor" d="M13.7 4.3l-1-.1V3c0-.6-.4-1-1-1H6.3c-.6 0-1 .4-1 1v1.2l-1 .1c-.5.1-.9.5-.9 1v1.2h11.2V5.3c0-.5-.4-.9-.9-1zM6.8 3.5h4.4v.7H6.8v-.7zm5.4 4.1H5.8v6.8c0 .6.4 1 1 1h4.4c.6 0 1-.4 1-1V7.6z"/>
+            </svg>
+        </div>
+    `;
+    
+    // 添加标题
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'sync-group-title';
+    titleDiv.textContent = `同步组 ${groupIndex}`;
+    
+    // 添加图层列表容器
+    const layersDiv = document.createElement('div');
+    layersDiv.className = 'sync-group-layers';
+    
+    // 添加图层列表
+    layersInGroup.forEach(layer => {
+        const layerDiv = document.createElement('div');
+        layerDiv.className = 'sync-layer';
+        layerDiv.textContent = layer.name;
+        layersDiv.appendChild(layerDiv);
+    });
+    
+    // 添加事件监听器
+    visibilityButton.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        
+        // 禁用按钮，防止重复点击
+        visibilityButton.disabled = true;
+        
+        try {
+            const targetLayers = layerIds
+                .map(id => layerCache.get(id))
+                .filter(layer => layer);
+            
+            const allVisible = targetLayers.every(layer => layer.visible);
+            const newState = !allVisible;
+
+            // 使用批处理更新图层可见性
+            await core.executeAsModal(async () => {
+                const batchCommands = targetLayers.map(layer => ({
+                    _obj: "set",
+                    _target: [{ _ref: "layer", _id: layer.id }],
+                    visible: newState
+                }));
+
+                await require("photoshop").action.batchPlay(batchCommands, {});
+
+                // 更新图层缓存中的可见性状态
+                targetLayers.forEach(layer => {
+                    layer.visible = newState;
+                    previousStates.set(layer.id, newState);
+                });
+            }, { commandName: '切换同步组可见性' });
+
+            // 更新按钮图标
+            visibilityButton.innerHTML = `
+                <div slot="icon" style="width: 18px; height: 18px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                        <path fill="currentColor" d="${newState ? 
+                            'M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z' : 
+                            'M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z'
+                        }"/>
+                    </svg>
+                </div>
+            `;
+
+        } catch (err) {
+            console.error('切换图层可见性时出错:', err);
+        } finally {
+            // 重新启用按钮
+            visibilityButton.disabled = false;
+        }
+    });
+    
+    deleteButton.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        
+        // 禁用按钮，防止重复点击
+        deleteButton.disabled = true;
+        
+        try {
+            // 收集所有需要删除的同步关系
+            const relatedIds = new Set();
+            const queue = [...layerIds];
+            
+            while (queue.length > 0) {
+                const currentId = queue.pop();
+                if (relatedIds.has(currentId)) continue;
+                
+                relatedIds.add(currentId);
+                const syncedLayers = syncGroups.get(currentId);
+                if (syncedLayers) {
+                    syncedLayers.forEach(layer => {
+                        if (!relatedIds.has(layer.id)) {
+                            queue.push(layer.id);
+                        }
+                    });
+                }
+            }
+
+            // 批量删除同步关系
+            for (const id of relatedIds) {
+                syncGroups.delete(id);
+                previousStates.delete(id);
+            }
+
+            // 移除组元素并更新UI
+            groupDiv.remove();
+            await updateUI();
+            
+        } catch (err) {
+            console.error('删除同步组时出错:', err);
+        } finally {
+            // 重新启用按钮
+            deleteButton.disabled = false;
+        }
+    });
+    
+    // 组装界面元素
+    controlsDiv.appendChild(visibilityButton);
+    controlsDiv.appendChild(deleteButton);
+    headerDiv.appendChild(controlsDiv);
+    headerDiv.appendChild(titleDiv);
+    groupDiv.appendChild(headerDiv);
+    groupDiv.appendChild(layersDiv);
+    
+    return groupDiv;
 } 

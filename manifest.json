@@ -12,9 +12,9 @@
         {
             "type": "panel",
             "id": "LayerSync",
-            "minimumSize": {"width": 300, "height": 200},
+            "minimumSize": {"width": 300, "height": 400},
             "maximumSize": {"width": 1000, "height": 1000},
-            "preferredDockedSize": {"width": 300, "height": 200},
+            "preferredDockedSize": {"width": 300, "height": 400},
             "label": {
                 "default": "图层同步显示",
                 "en-US": "Layer Sync Visibility",
