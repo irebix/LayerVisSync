@@ -9,6 +9,9 @@ let layerCache = new Map();
 let lastDocId = null;
 let lastLayerCount = 0;
 
+// 添加图层变化监听
+let lastLayerStructure = '';
+
 entrypoints.setup({
   panels: {
         LayerSync: {
@@ -23,9 +26,17 @@ function setupUI() {
     const syncButton = document.getElementById('syncButton');
     syncButton.addEventListener('click', handleSyncButtonClick);
     
-    // 降低更新频率到 500ms
-    setInterval(async () => {
-        await debouncedUpdateUI();
+    // 降低更新频率，使用 requestAnimationFrame 优化性能
+    let updateScheduled = false;
+    
+    setInterval(() => {
+        if (!updateScheduled) {
+            updateScheduled = true;
+            requestAnimationFrame(async () => {
+                await debouncedUpdateUI();
+                updateScheduled = false;
+            });
+        }
     }, 500);
 }
 
@@ -77,7 +88,7 @@ async function updateSyncGroupsList() {
     const uniqueGroups = new Map();
     const processedLayers = new Set();
     
-    // 批量处理同步关系
+    // 批量处理同���关系
     for (const [layerId, syncedLayers] of syncGroups.entries()) {
         if (processedLayers.has(layerId)) continue;
         
@@ -336,16 +347,18 @@ async function updateLayerCache() {
         const doc = app.activeDocument;
         if (!doc) return;
         
-        // 检查文档ID和图层数量是否变化
-        const currentLayerCount = doc.layers.length;
-        if (lastDocId === doc.id && layerCache.size > 0 && lastLayerCount === currentLayerCount) {
+        // 获取当前图层结构的快照
+        const currentStructure = await getLayerStructureSnapshot(doc);
+        
+        // 如果图层结构没有变化且缓存存在，直接返回
+        if (currentStructure === lastLayerStructure && layerCache.size > 0) {
             return;
         }
         
-        lastDocId = doc.id;
-        lastLayerCount = currentLayerCount;
+        // 更新图层结构快照
+        lastLayerStructure = currentStructure;
         
-        // 使用迭代器而不是递归来收集图层
+        // 使用迭代器更新缓存
         const newCache = new Map();
         const stack = [...doc.layers];
         
@@ -358,10 +371,53 @@ async function updateLayerCache() {
             }
         }
         
+        // 检查同步关系中的图层是否仍然存在
+        for (const [layerId, syncedLayers] of syncGroups.entries()) {
+            if (!newCache.has(layerId)) {
+                // 图层已被删除，清理同步关系
+                syncGroups.delete(layerId);
+                previousStates.delete(layerId);
+                continue;
+            }
+            
+            // 过滤掉不存在的同步图层
+            const validSyncedLayers = syncedLayers.filter(layer => 
+                newCache.has(layer.id)
+            );
+            
+            if (validSyncedLayers.length !== syncedLayers.length) {
+                if (validSyncedLayers.length < 2) {
+                    // 如果同步组中的图层少于2个，删除整个同步关系
+                    syncGroups.delete(layerId);
+                    previousStates.delete(layerId);
+                } else {
+                    // 更新同步关系
+                    syncGroups.set(layerId, validSyncedLayers);
+                }
+            }
+        }
+        
         layerCache = newCache;
     } catch (err) {
         console.error('更新图层缓存时出错:', err);
     }
+}
+
+// 获取图层结构快照
+async function getLayerStructureSnapshot(doc) {
+    const layerInfo = [];
+    const stack = [...doc.layers];
+    
+    while (stack.length > 0) {
+        const layer = stack.pop();
+        layerInfo.push(layer.id);
+        
+        if (layer.layers && layer.layers.length > 0) {
+            stack.push(...layer.layers);
+        }
+    }
+    
+    return layerInfo.sort().join(',');
 }
 
 // 添加获取图层路径的辅助函数
