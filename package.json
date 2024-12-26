@@ -1,0 +1,12 @@
+{
+    "name": "artlib",
+    "version": "1.0.0",
+    "description": "美术库导入插件",
+    "main": "index.js",
+    "scripts": {
+        "watch": "nodemon --watch . -e js,jsx,json,css,html --exec \"uxp plugin load\""
+    },
+    "author": "",
+    "license": "MIT",
+    "dependencies": {}
+} 

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>图层同步</title>
+    <link rel="stylesheet" href="https://spectrum.adobe.com/static/icons/spectrum-css-icons.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            padding: 12px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #f0f0f0;
+            background-color: #323232;
+        }
+
+        .control-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        sp-button {
+            width: 100%;
+        }
+
+        .sync-groups {
+            margin-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 12px;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 80px);
+        }
+
+        .sync-groups-title {
+            font-size: 11px;
+            color: #999;
+            padding: 4px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+
+        .sync-groups-container {
+            overflow-y: auto;
+            flex-grow: 1;
+            margin-right: -12px;
+            padding-right: 12px;
+        }
+
+        .sync-groups-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .sync-groups-container::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+        }
+
+        .sync-groups-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+
+        .sync-groups-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .sync-group {
+            margin-bottom: 1px;
+            user-select: none;
+        }
+
+        .sync-group.selected .sync-group-header {
+            background: #2d7bb4;
+        }
+
+        .sync-group.selected .sync-group-title {
+            color: #fff;
+        }
+
+        .sync-group.selected .sync-group-title::before {
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23fff" d="M2 2v12h12V2H2zm11 11H3V3h10v10z"/></svg>');
+        }
+
+        .sync-group-header {
+            display: flex;
+            align-items: center;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.05);
+            height: 32px;
+        }
+
+        .sync-group-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-right: 8px;
+        }
+
+        .sync-group-controls sp-icon {
+            opacity: 0.8;
+        }
+
+        .sync-group-controls sp-icon:hover {
+            opacity: 1;
+        }
+
+        .sync-group-visibility,
+        .sync-group-delete {
+            width: 16px;
+            height: 16px;
+            opacity: 0.8;
+            cursor: pointer;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .sync-group-visibility {
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23ccc" d="M8 3.5c-2.7 0-5.1 1.7-6 4.2.9 2.5 3.3 4.2 6 4.2s5.1-1.7 6-4.2C13.1 5.2 10.7 3.5 8 3.5zm0 7c-1.4 0-2.5-1.1-2.5-2.5S6.6 5.5 8 5.5s2.5 1.1 2.5 2.5S9.4 10.5 8 10.5z"/></svg>');
+        }
+
+        .sync-group-visibility.hidden {
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23ccc" d="M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z"/></svg>');
+        }
+
+        .sync-group-delete {
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23ccc" d="M12 4h-1V3c0-.6-.4-1-1-1H6c-.6 0-1 .4-1 1v1H4c-.6 0-1 .4-1 1v1h10V5c0-.6-.4-1-1-1zM6 3h4v1H6V3zm5 4H5v6c0 .6.4 1 1 1h4c.6 0 1-.4 1-1V7z"/></svg>');
+        }
+
+        .sync-group-visibility:hover,
+        .sync-group-delete:hover {
+            opacity: 1;
+        }
+
+        .sync-group-title {
+            display: flex;
+            align-items: center;
+            font-size: 12px;
+            color: #ccc;
+        }
+
+        .sync-group-title::before {
+            content: "";
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 4px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23ccc" d="M2 2v12h12V2H2zm11 11H3V3h10v10z"/></svg>');
+        }
+
+        .sync-group-layers {
+            background: #262626;
+        }
+
+        .sync-layer {
+            display: flex;
+            align-items: center;
+            height: 32px;
+            padding: 0 8px 0 24px;
+            font-size: 12px;
+            color: #ccc;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .sync-layer:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .sync-layer::before {
+            content: "";
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 4px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23ccc" d="M8 3.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9zM2.5 8a5.5 5.5 0 1111 0 5.5 5.5 0 01-11 0z"/></svg>');
+        }
+
+        .sync-layer-visibility {
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+            opacity: 0.8;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="%23ccc" d="M8 3.5c-2.7 0-5.1 1.7-6 4.2.9 2.5 3.3 4.2 6 4.2s5.1-1.7 6-4.2C13.1 5.2 10.7 3.5 8 3.5zm0 7c-1.4 0-2.5-1.1-2.5-2.5S6.6 5.5 8 5.5s2.5 1.1 2.5 2.5S9.4 10.5 8 10.5z"/></svg>');
+        }
+    </style>
+</head>
+<body>
+    <div class="control-panel">
+        <sp-button id="syncButton">同步所选图层</sp-button>
+        <div class="sync-groups">
+            <div class="sync-groups-title">同步组</div>
+            <div class="sync-groups-container" id="syncGroups">
+                <!-- 同步组将被添加到这里 -->
+            </div>
+        </div>
+    </div>
+    <script src="index.js"></script>
+</body>
+</html> 
