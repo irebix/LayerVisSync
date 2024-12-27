@@ -251,18 +251,11 @@ let watcherInterval = null;
 function startWatching() {
     if (watcherInterval) return;
     
-    const debouncedCheck = debounce(checkLayerChanges, 100);
-    watcherInterval = setInterval(debouncedCheck, 100);
+    // 使用适中的检查间隔（30ms）
+    watcherInterval = setInterval(checkLayerChanges, 30);
 }
 
-let lastCheckTime = 0;
-const CHECK_INTERVAL = 100; // 最小检查间隔
-
 async function checkLayerChanges() {
-    const now = Date.now();
-    if (now - lastCheckTime < CHECK_INTERVAL) return;
-    lastCheckTime = now;
-    
     try {
         const doc = app.activeDocument;
         if (!doc) return;
@@ -281,6 +274,7 @@ async function checkLayerChanges() {
             const currentState = layer.visible;
             
             if (previousState !== undefined && previousState !== currentState) {
+                // 收集需要更新的图层
                 updates.push({ layer, syncedLayers, newState: currentState });
                 processed.add(layerId);
                 
@@ -290,7 +284,7 @@ async function checkLayerChanges() {
             }
         }
         
-        // 批量执行更新
+        // 如果有更新，一次性批量处理
         if (updates.length > 0) {
             await core.executeAsModal(async () => {
                 for (const { layer, syncedLayers, newState } of updates) {
@@ -302,7 +296,7 @@ async function checkLayerChanges() {
                     }
                     previousStates.set(layer.id, newState);
                 }
-            }, { commandName: '批量同步图层可见性' });
+            }, { commandName: '同步图层可见性' });
         }
     } catch (err) {
         console.error('检查图层变化时出错:', err);
@@ -347,7 +341,7 @@ async function updateLayerCache() {
         const doc = app.activeDocument;
         if (!doc) return;
         
-        // 获取当前图层结构的快照
+        // 获取当���图层结构的快照
         const currentStructure = await getLayerStructureSnapshot(doc);
         
         // 如果图层结构没有变化且缓存存在，直接返回
@@ -435,7 +429,7 @@ function getLayerPath(layer) {
     return path.join(" / ");
 }
 
-// 添加创建同���组元素的函数
+// 添加创建同步组元素的函数
 function createSyncGroupElement(layerIds, groupIndex) {
     const groupDiv = document.createElement('div');
     groupDiv.className = 'sync-group';
@@ -524,7 +518,7 @@ function createSyncGroupElement(layerIds, groupIndex) {
             const allVisible = targetLayers.every(layer => layer.visible);
             const newState = !allVisible;
 
-            // 使用批处理更新图层可见性
+            // 使用批处理更新���层可见性
             await core.executeAsModal(async () => {
                 const batchCommands = targetLayers.map(layer => ({
                     _obj: "set",
