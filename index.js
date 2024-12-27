@@ -88,7 +88,7 @@ async function updateSyncGroupsList() {
     const uniqueGroups = new Map();
     const processedLayers = new Set();
     
-    // 批量处理同���关系
+    // 批量处理同步关系
     for (const [layerId, syncedLayers] of syncGroups.entries()) {
         if (processedLayers.has(layerId)) continue;
         
@@ -435,7 +435,7 @@ function getLayerPath(layer) {
     return path.join(" / ");
 }
 
-// 添��创建同步组元素的函数
+// 添加创建同���组元素的函数
 function createSyncGroupElement(layerIds, groupIndex) {
     const groupDiv = document.createElement('div');
     groupDiv.className = 'sync-group';
@@ -464,12 +464,17 @@ function createSyncGroupElement(layerIds, groupIndex) {
     // 设置可见性按钮图标
     visibilityButton.innerHTML = `
         <div slot="icon" style="width: 18px; height: 18px;">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                <path fill="currentColor" d="${allVisible ? 
-                    'M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z' : 
-                    'M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z'
-                }"/>
-            </svg>
+            ${allVisible ? `
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                    <path fill="currentColor" d="M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>
+                </svg>
+            ` : `
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                    <path fill="currentColor" d="M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>
+                    <line x1="4" y1="4" x2="14" y2="14" stroke="#323232" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="4" y1="4" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            `}
         </div>
     `;
     
@@ -539,12 +544,17 @@ function createSyncGroupElement(layerIds, groupIndex) {
             // 更新按钮图标
             visibilityButton.innerHTML = `
                 <div slot="icon" style="width: 18px; height: 18px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
-                        <path fill="currentColor" d="${newState ? 
-                            'M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z' : 
-                            'M13.359 11.238l-.707.707-2.12-2.121A5.228 5.228 0 018 10.5c-2.7 0-5.1-1.7-6-4.2.378-1.037 1.094-1.938 2.018-2.696L2.641 2.227l.707-.707 10.011 10.011zM8 4.5c.5 0 1 .1 1.4.3L7.8 3.2C7.9 3.1 7.9 3.1 8 3.1c2.7 0 5.1 1.7 6 4.2-.4 1-1 1.9-1.8 2.5l-1.2-1.2c.2-.4.3-.9.3-1.4 0-1.7-1.3-3-3-3-.5 0-1 .1-1.4.3L5.5 3.1c.7-.4 1.6-.6 2.5-.6zM4.3 5.2l1.2 1.2c-.2.4-.3.9-.3 1.4 0 1.7 1.3 3 3 3 .5 0 1-.1 1.4-.3l1.2 1.2c-.8.5-1.7.7-2.6.7-2.7 0-5.1-1.7-6-4.2.4-1 1-1.9 1.8-2.5z'
-                        }"/>
-                    </svg>
+                    ${newState ? `
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                            <path fill="currentColor" d="M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>
+                        </svg>
+                    ` : `
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18">
+                            <path fill="currentColor" d="M9 3.5c-3.3 0-6.3 2.1-7.5 5.3 1.2 3.2 4.2 5.3 7.5 5.3s6.3-2.1 7.5-5.3C15.3 5.6 12.3 3.5 9 3.5zm0 8.8c-1.9 0-3.5-1.6-3.5-3.5S7.1 5.3 9 5.3s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>
+                            <line x1="4" y1="4" x2="14" y2="14" stroke="#323232" stroke-width="3" stroke-linecap="round"/>
+                            <line x1="4" y1="4" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    `}
                 </div>
             `;
 

@@ -51,12 +51,5 @@
                 }
             ]
         }
-    ],
-    "requiredPermissions": {
-        "network": {
-            "domains": [
-                "https://spectrum.adobe.com"
-            ]
-        }
-    }
+    ]
 }
