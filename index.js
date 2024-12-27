@@ -2,6 +2,7 @@ const app = require('photoshop').app;
 const { entrypoints } = require("uxp");
 const { core } = require("photoshop");
 const { batchPlay } = require("photoshop").action;
+const { action } = require("photoshop");
 
 let syncGroups = new Map();
 let previousStates = new Map();
@@ -11,6 +12,9 @@ let lastLayerCount = 0;
 
 // 添加图层变化监听
 let lastLayerStructure = '';
+
+// 在文件顶部添加文档状态管理
+let documentStates = new Map(); // 存储每个文档的同步组状态
 
 entrypoints.setup({
   panels: {
@@ -26,8 +30,74 @@ function setupUI() {
     const syncButton = document.getElementById('syncButton');
     syncButton.addEventListener('click', handleSyncButtonClick);
     
-    // 降低更新频率，使用 requestAnimationFrame 优化性能
     let updateScheduled = false;
+    
+    // 添加文档切换监听
+    action.addNotificationListener(['activeDocumentChanged'], async () => {
+        try {
+            const doc = app.activeDocument;
+            
+            // 如果没有活动文档，清空UI和状态
+            if (!doc) {
+                clearUI();
+                syncGroups = new Map();
+                previousStates = new Map();
+                layerCache = new Map();
+                lastDocId = null;
+                return;
+            }
+            
+            // 保存当前文档状态
+            if (lastDocId) {
+                documentStates.set(lastDocId, {
+                    syncGroups: new Map(syncGroups),
+                    previousStates: new Map(previousStates),
+                    layerCache: new Map(layerCache)
+                });
+            }
+            
+            // 恢复新文档的状态
+            const docState = documentStates.get(doc.id);
+            if (docState) {
+                syncGroups = new Map(docState.syncGroups);
+                previousStates = new Map(docState.previousStates);
+                layerCache = new Map(docState.layerCache);
+            } else {
+                // 如果是新文档，初始化状态
+                syncGroups = new Map();
+                previousStates = new Map();
+                layerCache = new Map();
+            }
+            
+            lastDocId = doc.id;
+            await updateUI();
+        } catch (err) {
+            console.error('文档切换时出错:', err);
+        }
+    });
+
+    // 添加文档关闭监听
+    action.addNotificationListener(['documentClosed'], () => {
+        try {
+            // 直接清理UI和状态，不需要检查 activeDocument
+            clearUI();
+            
+            // 清除已关闭文档的状态
+            if (lastDocId) {
+                documentStates.delete(lastDocId);
+            }
+            
+            // 重置所有状态
+            syncGroups = new Map();
+            previousStates = new Map();
+            layerCache = new Map();
+            lastDocId = null;
+            lastLayerStructure = '';
+            
+        } catch (err) {
+            console.error('文档关闭时出错:', err);
+        }
+    });
     
     setInterval(() => {
         if (!updateScheduled) {
@@ -38,6 +108,19 @@ function setupUI() {
             });
         }
     }, 500);
+}
+
+// 添加清理UI的函数
+function clearUI() {
+    const syncGroupsContainer = document.querySelector('.sync-groups-container');
+    if (syncGroupsContainer) {
+        syncGroupsContainer.innerHTML = '';
+    }
+    
+    const syncButton = document.getElementById('syncButton');
+    if (syncButton) {
+        syncButton.textContent = '同步显示图层';
+    }
 }
 
 // 添加防抖函数
@@ -57,7 +140,10 @@ function debounce(func, wait) {
 const debouncedUpdateUI = debounce(async () => {
     try {
         const doc = app.activeDocument;
-        if (!doc) return;
+        if (!doc) {
+            clearUI();
+            return;
+        }
         
         await updateLayerCache();
         await Promise.all([
@@ -71,6 +157,12 @@ const debouncedUpdateUI = debounce(async () => {
 
 async function updateUI() {
     try {
+        const doc = app.activeDocument;
+        if (!doc) {
+            clearUI();
+            return;
+        }
+        
         await updateButtonText();
         await updateSyncGroupsList();
     } catch (err) {
@@ -341,7 +433,33 @@ async function updateLayerCache() {
         const doc = app.activeDocument;
         if (!doc) return;
         
-        // 获取当���图层结构的快照
+        // 更新当前文档ID
+        if (lastDocId !== doc.id) {
+            // 保存旧文档状态
+            if (lastDocId) {
+                documentStates.set(lastDocId, {
+                    syncGroups: new Map(syncGroups),
+                    previousStates: new Map(previousStates),
+                    layerCache: new Map(layerCache)
+                });
+            }
+            
+            // 恢复新文档状态
+            const docState = documentStates.get(doc.id);
+            if (docState) {
+                syncGroups = new Map(docState.syncGroups);
+                previousStates = new Map(docState.previousStates);
+                layerCache = new Map(docState.layerCache);
+            } else {
+                syncGroups = new Map();
+                previousStates = new Map();
+                layerCache = new Map();
+            }
+            
+            lastDocId = doc.id;
+        }
+        
+        // 获取当前图层结构的快照
         const currentStructure = await getLayerStructureSnapshot(doc);
         
         // 如果图层结构没有变化且缓存存在，直接返回
@@ -352,7 +470,7 @@ async function updateLayerCache() {
         // 更新图层结构快照
         lastLayerStructure = currentStructure;
         
-        // 使用迭代器更新缓存
+        // 使��迭代器更新缓存
         const newCache = new Map();
         const stack = [...doc.layers];
         
@@ -392,6 +510,13 @@ async function updateLayerCache() {
         }
         
         layerCache = newCache;
+        
+        // 更新文档状态
+        documentStates.set(doc.id, {
+            syncGroups: new Map(syncGroups),
+            previousStates: new Map(previousStates),
+            layerCache: new Map(layerCache)
+        });
     } catch (err) {
         console.error('更新图层缓存时出错:', err);
     }
@@ -518,7 +643,7 @@ function createSyncGroupElement(layerIds, groupIndex) {
             const allVisible = targetLayers.every(layer => layer.visible);
             const newState = !allVisible;
 
-            // 使用批处理更新���层可见性
+            // 使用批处理更新层可见性
             await core.executeAsModal(async () => {
                 const batchCommands = targetLayers.map(layer => ({
                     _obj: "set",
